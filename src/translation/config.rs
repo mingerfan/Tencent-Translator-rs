@@ -4,8 +4,29 @@ use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use anyhow::Context;
+use pulldown_cmark::{Parser, html};
 
 use super::backend::BackendConfig;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputFormat {
+    PlainText,
+    Markdown,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        OutputFormat::PlainText
+    }
+}
+
+pub fn markdown_to_html(markdown: &str) -> String {
+    let parser = Parser::new(markdown);
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+    html_output
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {

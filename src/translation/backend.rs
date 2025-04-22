@@ -5,6 +5,7 @@ use serde_json::json;
 use ring::hmac;
 
 use super::error::{TranslatorError, TranslationError};
+use super::config::OutputFormat;
 
 /// Trait for implementing translation backends
 pub trait TranslationBackend: Send + Sync {
@@ -16,6 +17,17 @@ pub trait TranslationBackend: Send + Sync {
 
     /// Check if this backend is available for use (e.g. has valid credentials)
     fn is_available(&self) -> bool;
+
+    /// Get the output format
+    fn output_format(&self) -> &OutputFormat;
+
+    /// Format the translated text according to the output format
+    fn format_output(&self, text: String) -> String {
+        match self.output_format() {
+            OutputFormat::Markdown => super::config::markdown_to_html(&text),
+            OutputFormat::PlainText => text,
+        }
+    }
 }
 
 /// Common configuration for translation backends
@@ -26,6 +38,8 @@ pub enum BackendConfig {
     Tencent {
         secret_id: String,
         secret_key: String,
+        #[serde(default)]
+        format: OutputFormat,
     },
     #[serde(rename = "openai_compatible")]
     OpenAICompatible {
@@ -33,21 +47,24 @@ pub enum BackendConfig {
         api_key: String,
         model: String,
         api_base: String,
+        #[serde(default)]
+        format: OutputFormat,
     },
 }
 
 impl BackendConfig {
     pub fn as_backend(&self) -> Box<dyn TranslationBackend> {
         match self {
-            BackendConfig::Tencent { secret_id, secret_key } => {
-                Box::new(TencentBackend::new(secret_id.clone(), secret_key.clone()))
+            BackendConfig::Tencent { secret_id, secret_key, format } => {
+                Box::new(TencentBackend::new(secret_id.clone(), secret_key.clone(), format.clone()))
             }
-            BackendConfig::OpenAICompatible { name, api_key, model, api_base } => {
+            BackendConfig::OpenAICompatible { name, api_key, model, api_base, format } => {
                 Box::new(OpenAICompatibleBackend::new(
                     name.clone(),
                     api_key.clone(),
                     model.clone(),
                     api_base.clone(),
+                    format.clone(),
                 ))
             }
         }
@@ -58,13 +75,15 @@ impl BackendConfig {
 pub struct TencentBackend {
     secret_id: String,
     secret_key: String,
+    format: OutputFormat,
 }
 
 impl TencentBackend {
-    pub fn new(secret_id: String, secret_key: String) -> Self {
+    pub fn new(secret_id: String, secret_key: String, format: OutputFormat) -> Self {
         Self {
             secret_id,
             secret_key,
+            format,
         }
     }
 
@@ -75,6 +94,10 @@ impl TencentBackend {
 }
 
 impl TranslationBackend for TencentBackend {
+    fn output_format(&self) -> &OutputFormat {
+        &self.format
+    }
+
     fn translate(&self, text: &str, from: &str, to: &str) -> anyhow::Result<String> {
         let service = "tmt";
         let host = "tmt.tencentcloudapi.com";
@@ -188,7 +211,7 @@ impl TranslationBackend for TencentBackend {
         }
 
         if let Some(text) = res["Response"]["TargetText"].as_str() {
-            Ok(text.to_string())
+            Ok(self.format_output(text.to_string()))
         } else {
             Err(TranslationError::InvalidResponse(format!("Invalid response format: {:?}", res)).into())
         }
@@ -209,20 +232,26 @@ pub struct OpenAICompatibleBackend {
     api_key: String,
     model: String,
     api_base: String,
+    format: OutputFormat,
 }
 
 impl OpenAICompatibleBackend {
-    pub fn new(name: String, api_key: String, model: String, api_base: String) -> Self {
+    pub fn new(name: String, api_key: String, model: String, api_base: String, format: OutputFormat) -> Self {
         Self {
             name,
             api_key,
             model,
             api_base,
+            format,
         }
     }
 }
 
 impl TranslationBackend for OpenAICompatibleBackend {
+    fn output_format(&self) -> &OutputFormat {
+        &self.format
+    }
+
     fn translate(&self, text: &str, from: &str, to: &str) -> anyhow::Result<String> {
         let prompt = match super::Config::load()?.get_prompt("translation") {
             Some(template) => template
@@ -230,6 +259,12 @@ impl TranslationBackend for OpenAICompatibleBackend {
                 .replace("{source}", from)
                 .replace("{target}", to),
             None => return Err(TranslatorError::ConfigError("Translation prompt not found".to_string()).into()),
+        };
+
+        let system_prompt = match self.format {
+            OutputFormat::Markdown => "You are a professional translator. Format your translation using markdown \
+                for better readability. Use markdown features like **bold**, *italic*, lists, headers when appropriate.",
+            OutputFormat::PlainText => "You are a professional translator.",
         };
 
         let client = Client::new();
@@ -243,7 +278,7 @@ impl TranslationBackend for OpenAICompatibleBackend {
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a professional translator."
+                        "content": system_prompt
                     },
                     {
                         "role": "user",
@@ -268,7 +303,7 @@ impl TranslationBackend for OpenAICompatibleBackend {
         }
 
         if let Some(translation) = res["choices"][0]["message"]["content"].as_str() {
-            Ok(translation.trim().to_string())
+            Ok(self.format_output(translation.trim().to_string()))
         } else {
             Err(TranslationError::InvalidResponse(format!("Invalid response format: {:?}", res)).into())
         }
