@@ -4,12 +4,12 @@ use reqwest::blocking::Client;
 use serde_json::json;
 use ring::hmac;
 
-use crate::translation::Error;
+use super::error::{TranslatorError, TranslationError};
 
 /// Trait for implementing translation backends
 pub trait TranslationBackend: Send + Sync {
     /// Translate the given text from the source language to the target language
-    fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, Error>;
+    fn translate(&self, text: &str, from: &str, to: &str) -> anyhow::Result<String>;
 
     /// Get the name of this backend
     fn name(&self) -> &'static str;
@@ -75,7 +75,7 @@ impl TencentBackend {
 }
 
 impl TranslationBackend for TencentBackend {
-    fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, Error> {
+    fn translate(&self, text: &str, from: &str, to: &str) -> anyhow::Result<String> {
         let service = "tmt";
         let host = "tmt.tencentcloudapi.com";
         let region = "ap-guangzhou";
@@ -92,11 +92,11 @@ impl TranslationBackend for TencentBackend {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| Error::TranslationFailed(e.to_string()))?
+            .map_err(|e| TranslationError::ServiceError(e.to_string()))?
             .as_secs();
 
         let date = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-            .ok_or_else(|| Error::TranslationFailed("Failed to get date".to_string()))?
+            .ok_or_else(|| TranslationError::ServiceError("Failed to get date".to_string()))?
             .format("%Y-%m-%d")
             .to_string();
 
@@ -176,16 +176,21 @@ impl TranslationBackend for TencentBackend {
             ))
             .json(&payload)
             .send()
-            .map_err(|e| Error::TranslationFailed(e.to_string()))?;
+            .map_err(|e| TranslationError::NetworkError(e.to_string()))?;
 
+        let status = response.status();
         let res = response
             .json::<serde_json::Value>()
-            .map_err(|e| Error::TranslationFailed(e.to_string()))?;
+            .map_err(|e| TranslationError::InvalidResponse(e.to_string()))?;
+
+        if !status.is_success() {
+            return Err(TranslationError::ServiceError(format!("API error: {:?}", res)).into());
+        }
 
         if let Some(text) = res["Response"]["TargetText"].as_str() {
             Ok(text.to_string())
         } else {
-            Err(Error::TranslationFailed(format!("API response error: {:?}", res)))
+            Err(TranslationError::InvalidResponse(format!("Invalid response format: {:?}", res)).into())
         }
     }
 
@@ -218,13 +223,13 @@ impl OpenAICompatibleBackend {
 }
 
 impl TranslationBackend for OpenAICompatibleBackend {
-    fn translate(&self, text: &str, from: &str, to: &str) -> Result<String, Error> {
+    fn translate(&self, text: &str, from: &str, to: &str) -> anyhow::Result<String> {
         let prompt = match super::Config::load()?.get_prompt("translation") {
             Some(template) => template
                 .replace("{text}", text)
                 .replace("{source}", from)
                 .replace("{target}", to),
-            None => return Err(Error::ConfigError("Translation prompt not found".to_string())),
+            None => return Err(TranslatorError::ConfigError("Translation prompt not found".to_string()).into()),
         };
 
         let client = Client::new();
@@ -248,19 +253,24 @@ impl TranslationBackend for OpenAICompatibleBackend {
                 "temperature": 0.3
             }))
             .send()
-            .map_err(|e| Error::TranslationFailed(e.to_string()))?;
+            .map_err(|e| TranslationError::NetworkError(e.to_string()))?;
 
+        let status = response.status();
         let res = response
             .json::<serde_json::Value>()
-            .map_err(|e| Error::TranslationFailed(e.to_string()))?;
+            .map_err(|e| TranslationError::InvalidResponse(e.to_string()))?;
+
+        if !status.is_success() {
+            if status.as_u16() == 429 {
+                return Err(TranslationError::RateLimitExceeded.into());
+            }
+            return Err(TranslationError::ServiceError(format!("API error: {:?}", res)).into());
+        }
 
         if let Some(translation) = res["choices"][0]["message"]["content"].as_str() {
             Ok(translation.trim().to_string())
         } else {
-            Err(Error::TranslationFailed(format!(
-                "Failed to get translation from API response: {:?}",
-                res
-            )))
+            Err(TranslationError::InvalidResponse(format!("Invalid response format: {:?}", res)).into())
         }
     }
 

@@ -1,7 +1,8 @@
 use std::env;
+use anyhow::Context;
 mod translation;
 use translation::{
-    Config, TranslationManager
+    Config, TranslationManager, format_error_display
 };
 
 const CSS: &str = r#"<style type="text/css">
@@ -23,6 +24,41 @@ const CSS: &str = r#"<style type="text/css">
     margin: 1rem 0.5rem 0.5rem 0;
     padding: 0.7rem 0.5rem 0.5rem 0;
     border-top: 3px dashed #eaeef6;
+}
+.error-container {
+    margin: 1rem 0;
+    font-family: "MiSansVF";
+}
+.error-message {
+    padding: 0.5em;
+    font-weight: 500;
+    font-size: 16px;
+    border-radius: 4px;
+    margin-bottom: 0.5em;
+}
+.error-details {
+    font-family: monospace;
+    font-size: 14px;
+    padding: 0.5em;
+    background: #f8f9fa;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    display: none;
+}
+.error-container:hover .error-details {
+    display: block;
+}
+.error-message.network {
+    color: #e67e22;
+    background-color: #fef5ea;
+}
+.error-message.config {
+    color: #c0392b;
+    background-color: #fae9e8;
+}
+.error-message.service {
+    color: #2980b9;
+    background-color: #eaf2fa;
 }
 definition {
     font-family: "MiSansVF";
@@ -63,16 +99,30 @@ fn is_chinese(ch: char) -> bool {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn display_error(error: &anyhow::Error) {
+    // 记录详细错误到stderr
+    eprintln!("Error occurred: {:#}", error);
+    
+    // 获取用户友好的错误信息和详细信息
+    let (user_msg, technical_details, error_class) = format_error_display(error);
+    
+    // 输出格式化的错误信息
+    println!(r#"<div class="error-container">
+    <div class="error-message {}">{}</div>
+    <div class="error-details">{}</div>
+</div>"#, error_class, user_msg, technical_details);
+}
+
+fn main() -> anyhow::Result<()> {
     let args = env::args().collect::<Vec<String>>();
 
     if args.len() < 2 {
-        println!("Invalid arguments! Usage: {} <text>", args[0]);
-        return Err("Invalid arguments".into());
+        return Err(anyhow::anyhow!("Usage: {} <text>", args[0]));
     }
 
     // Load configuration
-    let config = Config::load()?;
+    let config = Config::load()
+        .context("Failed to load configuration")?;
 
     // Initialize translation manager
     let mut manager = TranslationManager::new();
@@ -99,16 +149,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("</div>");
             }
             Err(e) => {
-                eprintln!("Translation error: {:?}", e);
-                println!("<div class=\"frame\">");
-                println!("<definition>Translation failed</definition>");
-                println!("</div>");
+                display_error(&e);
             }
         }
     } else {
-        println!("<div class=\"frame\">");
-        println!("<definition>No default translation backend configured. Please set one in config.json.</definition>");
-        println!("</div>");
+        display_error(&anyhow::anyhow!("No default translation backend configured. Please set one in config.json."));
     }
 
     println!("<br>");

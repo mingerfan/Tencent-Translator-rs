@@ -3,8 +3,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use anyhow::Context;
 
-use super::error::Error;
 use super::backend::BackendConfig;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,18 +38,21 @@ Target language: {target}"#.to_string(),
 }
 
 impl Config {
-    pub fn config_path() -> Result<PathBuf, Error> {
+    pub fn config_path() -> anyhow::Result<PathBuf> {
         let current_dir = env::current_dir()
-            .map_err(|e| Error::ConfigError(format!("Failed to get current directory: {}", e)))?;
+            .context("Failed to get current directory")?;
         Ok(current_dir.join("rs_translator_config.json"))
     }
 
-    pub fn load() -> Result<Self, Error> {
+    pub fn load() -> anyhow::Result<Self> {
         let config_path = Self::config_path()?;
 
         if config_path.exists() {
-            let content = fs::read_to_string(&config_path)?;
-            Ok(serde_json::from_str(&content)?)
+            let content = fs::read_to_string(&config_path)
+                .context("Failed to read config file")?;
+            let config = serde_json::from_str(&content)
+                .context("Failed to parse config JSON")?;
+            Ok(config)
         } else {
             let config = Config::default();
             config.save()?;
@@ -57,10 +60,12 @@ impl Config {
         }
     }
 
-    pub fn save(&self) -> Result<(), Error> {
+    pub fn save(&self) -> anyhow::Result<()> {
         let config_path = Self::config_path()?;
-        let content = serde_json::to_string_pretty(self)?;
-        fs::write(config_path, content)?;
+        let content = serde_json::to_string_pretty(self)
+            .context("Failed to serialize config")?;
+        fs::write(config_path, content)
+            .context("Failed to write config file")?;
         Ok(())
     }
 
