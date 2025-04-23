@@ -68,7 +68,31 @@ definition {
     font-weight: 500;
     font-size: 16px;
 }
+/* KaTeX math formula styles */
+.katex-math {
+    font-size: 1.1em;
+}
+.katex-display {
+    margin: 1em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.5em 0;
+}
 </style>"#;
+
+// KaTeX CDN links for LaTeX rendering
+const KATEX_HEADER: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+    onload="renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false},
+        {left: '\\(', right: '\\)', display: false},
+        {left: '\\[', right: '\\]', display: true}
+      ],
+      throwOnError: false
+    });"></script>"#;
 
 fn count_languages(text: &str) -> (usize, usize) {
     let mut chinese_count = 0;
@@ -137,6 +161,7 @@ fn main() -> anyhow::Result<()> {
 
     // Print CSS and original text
     println!("{}", CSS);
+    println!("{}", KATEX_HEADER);
     println!("<div class=\"originalText\">{}</div>", args[1]);
     println!("<br><br>");
 

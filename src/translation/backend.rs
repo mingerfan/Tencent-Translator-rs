@@ -287,6 +287,7 @@ impl TranslationBackend for OpenAICompatibleBackend {
                 ],
                 "temperature": 0.3
             }))
+            .timeout(std::time::Duration::from_secs(60))
             .send()
             .map_err(|e| TranslationError::NetworkError(e.to_string()))?;
 
